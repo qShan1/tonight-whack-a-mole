@@ -1,0 +1,27 @@
+app:
+  id: "7712185908346290212"
+  name: "今晚打地鼠"
+  slogan: "用双手在沉浸式游艺厅里连击地鼠，躲开假动作并冲击最高分"
+  description: "《今晚打地鼠》是一款为 PICO 空间计算设备制作的裸手打地鼠肉鸽游戏。玩家站在复古全包围游艺厅中，用手部追踪瞄准六个洞口，抓住出洞时机完成敲击。每轮会出现普通地鼠、金鼠、锅盖鼠、假动作和鼠王，击中目标可以获得奖券，并在回合结束后从三项强化中选择一种。连击、限时、耐久灯和鼠王预警共同构成逐步加压的挑战。游戏支持虚拟游艺厅和透视环境两种场景，设置中可以调整音效、动效强度和透视显示。适合使用 PICO 4 Ultra 进行短局体验，也适合在客厅或桌面前进行站立式游玩。"
+  tags: [ "休闲益智" ]
+  category: "game"
+  icon: "assets/icon.jpg"
+  landscape: "assets/landscape.png"
+  detail_images:
+    - "assets/detail-title.png"
+    - "assets/detail-round.png"
+    - "assets/detail-settings.png"
+    - "assets/detail-passthrough.png"
+    - "assets/detail-night.png"
+  videos: []
+version:
+  name: "V1.0.0"
+  notes: "新增五轮打地鼠肉鸽流程、鼠王关和三选一强化。加入金鼠、锅盖鼠、假动作、连击和奖券系统。优化全包围游艺厅、透视场景、设置面板、命中反馈与结算统计。"
+build:
+  repo_url: "https://github.com/qShan1/tonight-whack-a-mole"
+  repo_visibility: "public"
+  tech_stack: "android_spatial"
+  ai_tool: "Codex CLI"
+  ai_model: "GPT-6"
+  features: [ "hand_tracking", "mixed_reality" ]
+  teammates: []
