@@ -2,7 +2,7 @@ package com.example.windowbirds.content
 
 import kotlin.random.Random
 
-internal enum class PopKind { MOUSE, GOLD, LID, DECOY, BOSS }
+internal enum class PopKind { MOUSE, GOLD, LID, DECOY, FEINT, BOSS }
 internal enum class ArcadePhase { READY, PLAYING, DRAW, WON, LOST }
 
 internal enum class ArcadePerk(val label: String, val detail: String) {
@@ -34,11 +34,11 @@ internal val arcadeRounds = listOf(
         PopCue(8800, 2, PopKind.MOUSE),
     )),
     ArcadeRound("敲锅盖", listOf(
-        PopCue(0, 3, PopKind.LID, 1800), PopCue(2000, 1, PopKind.MOUSE),
-        PopCue(2300, 0, PopKind.GOLD, 1150), PopCue(3900, 5, PopKind.LID, 1800),
-        PopCue(4200, 2, PopKind.MOUSE), PopCue(6100, 0, PopKind.LID, 1800),
-        PopCue(6300, 1, PopKind.MOUSE), PopCue(8250, 3, PopKind.GOLD, 1150),
-        PopCue(8450, 4, PopKind.LID, 1800),
+        PopCue(0, 3, PopKind.LID, 1800), PopCue(650, 0, PopKind.GOLD, 850),
+        PopCue(2550, 1, PopKind.MOUSE), PopCue(2800, 5, PopKind.LID, 1700),
+        PopCue(4900, 4, PopKind.LID, 1750), PopCue(5520, 1, PopKind.GOLD, 850),
+        PopCue(7200, 2, PopKind.MOUSE), PopCue(8850, 5, PopKind.LID, 1650),
+        PopCue(9380, 2, PopKind.GOLD, 850),
     )),
     ArcadeRound("别敲木偶", listOf(
         PopCue(0, 1, PopKind.DECOY), PopCue(250, 3, PopKind.MOUSE),
@@ -50,15 +50,17 @@ internal val arcadeRounds = listOf(
         PopCue(10350, 1, PopKind.LID, 1800),
     )),
     ArcadeRound("鼠王登场", listOf(
-        PopCue(0, 1, PopKind.DECOY), PopCue(850, 3, PopKind.DECOY),
-        PopCue(1900, 5, PopKind.BOSS, 1550), PopCue(3900, 0, PopKind.BOSS, 1550),
-        PopCue(5850, 4, PopKind.DECOY), PopCue(6200, 2, PopKind.BOSS, 1550),
-        PopCue(8200, 3, PopKind.BOSS, 1550), PopCue(10200, 4, PopKind.BOSS, 1550),
+        PopCue(0, 1, PopKind.FEINT), PopCue(650, 3, PopKind.FEINT),
+        PopCue(1850, 5, PopKind.BOSS, 1350), PopCue(3240, 1, PopKind.FEINT),
+        PopCue(3900, 0, PopKind.BOSS, 1260), PopCue(5430, 4, PopKind.FEINT),
+        PopCue(6150, 2, PopKind.BOSS, 1180), PopCue(7670, 0, PopKind.FEINT),
+        PopCue(8250, 3, PopKind.BOSS, 1160), PopCue(10350, 4, PopKind.BOSS, 1160),
     )),
 )
 
 internal data class ActivePop(val cue: PopCue, var hits: Int = 0)
 internal data class Strike(val hole: Int, val kind: PopKind?, val cracked: Boolean = false)
+internal data class RunSummary(val bestStreak: Int, val goldHits: Int, val picks: List<ArcadePerk>)
 internal data class ArcadeHud(
     val phase: ArcadePhase, val round: Int, val health: Int, val streak: Int,
     val tickets: Int, val score: Int, val bossHits: Int, val remaining: Int,
@@ -77,6 +79,9 @@ internal class ArcadeRun(private val random: Random = Random.Default) {
     private var cursor = 0
     private var health = 5
     private var streak = 0
+    private var bestStreak = 0
+    private var goldHits = 0
+    private var picks = emptyList<ArcadePerk>()
     private var tickets = 0
     private var score = 0
     private var bossHits = 0
@@ -89,6 +94,8 @@ internal class ArcadeRun(private val random: Random = Random.Default) {
     fun snapshot() = ArcadeHud(phase, round, health, streak, tickets, score, bossHits,
         cues.size - cursor + targets.count { it != null }, offers, tickets >= 2 && !redrawn,
         (-elapsed + 999).coerceAtLeast(0) / 1000)
+
+    fun summary() = RunSummary(bestStreak, goldHits, picks)
 
     fun start() {
         if (phase == ArcadePhase.READY) startRound()
@@ -109,13 +116,14 @@ internal class ArcadeRun(private val random: Random = Random.Default) {
     fun duration(cue: PopCue): Int =
         cue.duration + if (ArcadePerk.SLOW in perks && cue.kind != PopKind.DECOY) 350 else 0
 
-    fun warning(hole: Int): Boolean {
+    fun warning(hole: Int): PopCue? {
         for (index in cursor until cues.size) {
             val cue = cues[index]
-            if (cue.time > elapsed + 300) break
-            if (cue.hole == hole) return true
+            if (cue.time > elapsed + 650) break
+            val lead = if (cue.kind == PopKind.BOSS) 650 else 300
+            if (cue.hole == hole && cue.time <= elapsed + lead) return cue
         }
-        return false
+        return null
     }
 
     fun advance(delta: Int) {
@@ -127,7 +135,7 @@ internal class ArcadeRun(private val random: Random = Random.Default) {
                 targets[hole] = null
                 when (target.cue.kind) {
                     PopKind.MOUSE, PopKind.LID, PopKind.BOSS -> miss()
-                    PopKind.GOLD, PopKind.DECOY -> Unit
+                    PopKind.GOLD, PopKind.DECOY, PopKind.FEINT -> Unit
                 }
             }
         }
@@ -137,7 +145,7 @@ internal class ArcadeRun(private val random: Random = Random.Default) {
         }
         while (cursor < cues.size && cues[cursor].time <= elapsed) {
             val cue = cues[cursor++]
-            targets[cue.hole] = ActivePop(cue)
+            if (cue.kind != PopKind.FEINT) targets[cue.hole] = ActivePop(cue)
         }
         if (cursor == cues.size && targets.all { it == null }) {
             if (round == arcadeRounds.lastIndex) {
@@ -195,10 +203,14 @@ internal class ArcadeRun(private val random: Random = Random.Default) {
             if (health == 0) phase = ArcadePhase.LOST
         } else {
             streak++
+            bestStreak = maxOf(bestStreak, streak)
             score += if (kind == PopKind.GOLD) 2 else 1
             val threshold = if (ArcadePerk.STREAK in perks) 3 else 4
             if (streak % threshold == 0) tickets++
-            if (kind == PopKind.GOLD) tickets += if (ArcadePerk.DOUBLE_GOLD in perks) 2 else 1
+            if (kind == PopKind.GOLD) {
+                goldHits++
+                tickets += if (ArcadePerk.DOUBLE_GOLD in perks) 2 else 1
+            }
             if (kind == PopKind.BOSS && ++bossHits == 3) phase = ArcadePhase.WON
         }
         return Strike(hole, kind)
@@ -226,6 +238,7 @@ internal class ArcadeRun(private val random: Random = Random.Default) {
             ArcadePerk.BONUS -> tickets += 2
             else -> perks += perk
         }
+        picks = picks + perk
         offers = emptyList()
         round++
         startRound()

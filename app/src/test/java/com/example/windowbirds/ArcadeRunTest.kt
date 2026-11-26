@@ -9,6 +9,9 @@ class ArcadeRunTest {
     @Test
     fun fiveRoundsCanBeClearedAndTheBossNeedsThreeHits() {
         val run = ArcadeRun(Random(26))
+        val picks = mutableListOf<ArcadePerk>()
+        var sawBossFeint = false
+        var sawGoldWarning = false
         run.start()
         for (round in arcadeRounds.indices) {
             assertEquals(round, run.round)
@@ -16,6 +19,16 @@ class ArcadeRunTest {
                 if (run.phase == ArcadePhase.PLAYING) {
                     run.advance(30)
                     assertTrue(run.targets.count { it != null } <= 3)
+                    if (round == arcadeRounds.lastIndex) {
+                        for (hole in run.targets.indices) {
+                            when (run.warning(hole)?.kind) {
+                                PopKind.FEINT -> sawBossFeint = true
+                                PopKind.BOSS -> sawGoldWarning = true
+                                else -> Unit
+                            }
+                        }
+                        assertTrue(run.targets.none { it?.cue?.kind == PopKind.FEINT })
+                    }
                     for (hole in run.targets.indices) {
                         val target = run.targets[hole] ?: continue
                         if (target.cue.kind == PopKind.DECOY) continue
@@ -28,12 +41,18 @@ class ArcadeRunTest {
                 assertEquals(ArcadePhase.DRAW, run.phase)
                 val offers = run.snapshot().offers
                 assertEquals(3, offers.toSet().size)
+                picks += offers.first()
                 run.choose(offers.first())
             }
         }
         assertEquals(ArcadePhase.WON, run.phase)
         assertEquals(3, run.snapshot().bossHits)
         assertEquals(5, run.snapshot().health)
+        assertTrue(sawBossFeint)
+        assertTrue(sawGoldWarning)
+        assertEquals(picks, run.summary().picks)
+        assertTrue(run.summary().bestStreak >= 6)
+        assertTrue(run.summary().goldHits > 0)
     }
 
     @Test

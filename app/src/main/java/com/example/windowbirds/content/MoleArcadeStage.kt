@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import com.example.windowbirds.R
 import com.pico.spatial.core.ecs.CollisionComponent
 import com.pico.spatial.core.ecs.Entity
+import com.pico.spatial.core.ecs.HoverEffectComponent
 import com.pico.spatial.core.ecs.InteractableComponent
 import com.pico.spatial.core.ecs.ModelEntity
 import com.pico.spatial.core.ecs.TransformComponent
@@ -117,7 +118,10 @@ private fun MoleArcade(
     val currentOptions by rememberUpdatedState(options)
 
     DisposableEffect(scene) { onDispose { scene.close() } }
-    SideEffect { scene.setPassthrough(options.passthrough) }
+    SideEffect {
+        scene.setPassthrough(options.passthrough)
+        scene.setInputEnabled(!settingsOpen && hud.phase == ArcadePhase.PLAYING && hud.secondsToStart == 0)
+    }
     LaunchedEffect(hud.phase) {
         if (hud.phase == ArcadePhase.WON || hud.phase == ArcadePhase.LOST) onScore(hud.score)
     }
@@ -148,10 +152,13 @@ private fun MoleArcade(
                 val index = tap.targetEntity?.let(scene::indexOf) ?: -1
                 if (!settingsOpen && run.phase == ArcadePhase.PLAYING && index >= 0) {
                     val hits = run.strike(index)
-                    hits.forEach { scene.strike(it) }
-                    hits.firstOrNull()?.let(audio::strike)
-                    if (run.phase == ArcadePhase.WON) audio.reward()
-                    hud = run.snapshot()
+                    if (hits.isNotEmpty()) {
+                        scene.strike(hits)
+                        hud = run.snapshot()
+                        scene.update(run, hud, 0, currentOptions.reducedMotion)
+                        audio.strike(hits.first())
+                        if (run.phase == ArcadePhase.WON) audio.reward()
+                    }
                 }
             }
         },
@@ -213,7 +220,7 @@ private fun MoleArcade(
                                     if (hud.secondsToStart > 0) {
                                         Text("${hud.secondsToStart} 秒后开轮", color = DisplayAccent)
                                     } else if (hud.round == arcadeRounds.lastIndex) {
-                                    Text("鼠王  ${hud.bossHits} / 3", color = DisplayText)
+                                        Text("鼠王  ${hud.bossHits} / 3  ·  等金灯，红灯是虚晃", color = DisplayText)
                                 } else if (hud.round == 0 && hud.score == 0) {
                                     Text("第一只会等你敲中。", color = DisplayText)
                                 } else {
@@ -256,11 +263,17 @@ private fun MoleArcade(
                                 }
                             }
                             ArcadePhase.WON, ArcadePhase.LOST -> {
+                                val summary = run.summary()
                                 Text(if (hud.phase == ArcadePhase.WON) "鼠王回洞了" else "这局结束了",
                                     fontSize = 32.sp, color = DisplayAccent)
                                 Text("得分 ${hud.score}   ·   第 ${hud.round + 1} 轮   ·   耐久 ${hud.health}/5",
                                     fontSize = 20.sp, color = DisplayText)
                                     Text("本机最高分  ${maxOf(hud.score, bestScore)}", color = DisplayText)
+                                Text("最高连击  ${summary.bestStreak}   ·   金鼠  ${summary.goldHits} 只",
+                                    color = DisplayText)
+                                if (summary.picks.isNotEmpty()) {
+                                    Text("本局强化  ${summary.picks.joinToString(" / ") { it.label }}", color = DisplayText)
+                                }
                                 Button(onClick = onRestart) { Text("再来一局") }
                             }
                         }
@@ -322,6 +335,7 @@ private class MoleCabinet {
     private var streakLightAge = 500
     private var effectAge = 420
     private var effect: Strike? = null
+    private var inputEnabled = false
 
     init {
         buildBooth()
@@ -442,14 +456,15 @@ private class MoleCabinet {
 
     fun setPassthrough(enabled: Boolean) {
         // The Mixed stage keeps the cabinet visible when the opaque room is hidden.
-        room.enabled = !enabled
+        if (room.enabled == enabled) room.enabled = !enabled
     }
 
     private fun hole(x: Float, z: Float, index: Int): Hole {
-        box(0.294f, 0.018f, 0.264f, brass, Vector3(x, 1.128f, z))
         box(0.255f, 0.021f, 0.228f, dark, Vector3(x, 1.135f, z))
         val warning = box(0.152f, 0.021f, 0.030f, orange, Vector3(x, 1.139f, z + 0.122f))
         warning.enabled = false
+        val bossWarning = box(0.152f, 0.021f, 0.030f, cream, Vector3(x, 1.139f, z + 0.122f))
+            .apply { enabled = false }
         val cover = box(0.206f, 0.033f, 0.168f, navy, Vector3(x, 1.156f, z)).apply { enabled = false }
         val collider = Entity().apply {
             setName("hole-${index + 1}")
@@ -457,11 +472,11 @@ private class MoleCabinet {
             root.addChild(this)
             val shape = ShapeResource.createBox(Vector3(0.31f, 0.27f, 0.28f))
             val material = PhysicsMaterialResource()
-            components.set(InteractableComponent())
             components.set(CollisionComponent(collisionShape = listOf(shape), physicsMaterial = material))
             shape.close()
             material.close()
         }
+        box(0.294f, 0.018f, 0.264f, brass, Vector3(0f, -0.060f, 0f), collider)
         val target = Entity().also { root.addChild(it); it.enabled = false }
         val ordinary = sphere(0.096f, fur, Vector3(0f, 0f, 0f), target)
         val gold = sphere(0.096f, brass, Vector3(0f, 0f, 0f), target)
@@ -477,14 +492,31 @@ private class MoleCabinet {
         for (tooth in -1..1) {
             box(0.029f, 0.040f, 0.035f, brass, Vector3(tooth * 0.047f, 0.132f, 0.027f), crown)
         }
-        return Hole(x, z, collider, cover, warning, target, ordinary, gold, decoy, lid, crown)
+        return Hole(x, z, collider, cover, warning, bossWarning, target, ordinary, gold, decoy, lid, crown)
     }
 
     fun indexOf(entity: Entity) = holes.indexOfFirst { it.collider == entity }
 
-    fun strike(strike: Strike) {
-        effect = strike
+    fun setInputEnabled(enabled: Boolean) {
+        if (inputEnabled == enabled) return
+        inputEnabled = enabled
+        for (hole in holes) {
+            if (enabled) {
+                hole.collider.components.set(InteractableComponent())
+                hole.collider.components.set(HoverEffectComponent())
+            } else {
+                hole.collider.components.remove(HoverEffectComponent::class.java)
+                hole.collider.components.remove(InteractableComponent::class.java)
+            }
+        }
+    }
+
+    fun strike(hits: List<Strike>) {
+        effect = hits.first()
         effectAge = 0
+        for (hit in hits) {
+            if (hit.kind != null && !hit.cracked) holes[hit.hole].retreatMs = 120
+        }
     }
 
     private fun updateCabinetLights(hud: ArcadeHud, delta: Int, reducedMotion: Boolean) {
@@ -528,18 +560,28 @@ private class MoleCabinet {
         if (activeEffect != null) effectAge += delta
         holes.forEachIndexed { index, hole ->
             val pop = if (run.phase == ArcadePhase.PLAYING) run.targets[index] else null
-            val retreating = pop == null && activeEffect?.hole == index &&
-                activeEffect.kind != null && !activeEffect.cracked && effectAge < 190
-            val warning = run.phase == ArcadePhase.PLAYING && pop == null && run.warning(index)
-            if (hole.warningState != warning) {
-                hole.warningState = warning
-                hole.warning.enabled = warning
-                hole.cover.enabled = warning
+            val warning = if (run.phase == ArcadePhase.PLAYING && pop == null) run.warning(index) else null
+            val boss = warning?.kind == PopKind.BOSS
+            val warningRemaining = warning?.let { it.time - run.elapsed } ?: 0
+            val showGold = boss && (reducedMotion || warningRemaining > 470 || warningRemaining in 120..330)
+            val signal = when {
+                warning == null -> DoorSignal.CLOSED
+                showGold -> DoorSignal.GOLD
+                boss -> DoorSignal.RATTLE
+                else -> DoorSignal.RED
             }
-            if (warning) {
+            if (hole.signal != signal) {
+                hole.signal = signal
+                hole.warning.enabled = signal == DoorSignal.RED
+                hole.bossWarning.enabled = signal == DoorSignal.GOLD
+                hole.cover.enabled = signal != DoorSignal.CLOSED
+            }
+            if (warning != null) {
                 val wobble = if (reducedMotion) 0f else sin(run.elapsed * 0.045f) * 10f
                 hole.cover.arcadeTransform.eulerAngles = EulerAngles(roll = wobble)
             }
+            hole.retreatMs = (hole.retreatMs - delta).coerceAtLeast(0)
+            val retreating = pop == null && hole.retreatMs > 0
             val appearance = pop?.cue?.kind ?: if (retreating) hole.kind else null
             val cracked = pop?.hits == 1
             if (appearance != hole.kind || cracked != hole.cracked) {
@@ -559,10 +601,11 @@ private class MoleCabinet {
                 val timeLeft = pop.cue.time + run.duration(pop.cue) - run.elapsed
                 val sink = (timeLeft / 125f).coerceIn(0f, 1f)
                 val height = 1.07f + 0.168f * eased * sink
+                hole.lastHeight = height
                 hole.target.arcadeTransform.position = Vector3(hole.x, height, hole.z)
             } else if (retreating) {
-                val dip = ((effectAge - 80) / 110f).coerceIn(0f, 1f)
-                hole.target.arcadeTransform.position = Vector3(hole.x, 1.238f - 0.17f * dip, hole.z)
+                val height = 1.07f + (hole.lastHeight - 1.07f) * (hole.retreatMs / 120f)
+                hole.target.arcadeTransform.position = Vector3(hole.x, height, hole.z)
             }
         }
         if (activeEffect == null) return
@@ -576,11 +619,11 @@ private class MoleCabinet {
         }
         val hole = holes[activeEffect.hole]
         val progress = effectAge / 380f
-        val swing = (effectAge / 100f).coerceIn(0f, 1f)
-        hammer.enabled = progress < 0.72f
+        val rebound = sin((effectAge / 185f).coerceIn(0f, 1f) * 1.5708f)
+        hammer.enabled = effectAge < 185
         if (hammer.enabled) {
-            hammer.arcadeTransform.position = Vector3(hole.x, 1.52f - swing * 0.28f, hole.z)
-            hammer.arcadeTransform.eulerAngles = EulerAngles(roll = 56f * (1f - swing) - 16f)
+            hammer.arcadeTransform.position = Vector3(hole.x, 1.24f + rebound * 0.26f, hole.z)
+            hammer.arcadeTransform.eulerAngles = EulerAngles(roll = -16f + rebound * 57f)
         }
         flyingLid.enabled = activeEffect.cracked && !reducedMotion
         if (flyingLid.enabled) {
@@ -588,9 +631,9 @@ private class MoleCabinet {
                 1.28f + 0.36f * sin(progress * 3.14159f), hole.z)
             flyingLid.arcadeTransform.eulerAngles = EulerAngles(roll = progress * 290f)
         }
-        val impact = (progress - 0.20f).coerceAtLeast(0f)
+        val impact = progress
         for ((index, spark) in sparks.withIndex()) {
-            spark.enabled = !reducedMotion && activeEffect.kind != null && progress > 0.20f
+            spark.enabled = !reducedMotion && activeEffect.kind != null && effectAge < 220
             if (spark.enabled) {
                 val angle = index * 1.256637f
                 spark.arcadeTransform.position = Vector3(hole.x + cos(angle) * impact * 0.37f,
@@ -598,11 +641,11 @@ private class MoleCabinet {
                 spark.arcadeTransform.eulerAngles = EulerAngles(roll = index * 29f + progress * 120f)
             }
         }
-        val showImpact = !reducedMotion && activeEffect.kind != null && effectAge in 90..220
+        val showImpact = !reducedMotion && activeEffect.kind != null && effectAge < 220
         for ((index, bar) in impactBars.withIndex()) {
             if (bar.enabled != showImpact) bar.enabled = showImpact
             if (showImpact) {
-                val spread = 0.14f + (effectAge - 90) * 0.00035f
+                val spread = 0.14f + effectAge * 0.00035f
                 val side = if (index % 2 == 0) -1f else 1f
                 bar.arcadeTransform.position = if (index < 2) Vector3(hole.x, 1.153f, hole.z + side * spread)
                     else Vector3(hole.x + side * spread, 1.153f, hole.z)
@@ -640,14 +683,19 @@ private class MoleCabinet {
     }
 }
 
+private enum class DoorSignal { CLOSED, RED, RATTLE, GOLD }
+
 private class Hole(
     val x: Float, val z: Float, val collider: Entity, val cover: Entity, val warning: Entity,
+    val bossWarning: Entity,
     val target: Entity, val ordinary: Entity, val gold: Entity, val decoy: Entity,
     val lid: Entity, val crown: Entity,
 ) {
     var kind: PopKind? = null
     var cracked = false
-    var warningState = false
+    var signal = DoorSignal.CLOSED
+    var retreatMs = 0
+    var lastHeight = 1.07f
 }
 
 private class ArcadeAudio(context: Context) {
